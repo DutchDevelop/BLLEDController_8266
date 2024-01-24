@@ -2,6 +2,7 @@
 #define _LED
 
 #include <Arduino.h>
+#include "types.h"
 
 const int redPin = 5;
 const int greenPin = 14;
@@ -17,18 +18,13 @@ int currentCold = 0;
 
 void tweenToColor(int targetRed, int targetGreen, int targetBlue, int targetWarm, int targetCold, int duration) {
 
-    float brightness = (float)printerConfig.brightness/100.0;
-
-    int brightenedRed = round(targetRed * brightness);
-    int brightenedGreen = round(targetGreen * brightness);
-    int brightenedBlue = round(targetBlue * brightness);
-    int brightenedWarm = round(targetWarm * brightness);
-    int brightenedCold = round(targetCold * brightness);
+    int brightenedRed = round(targetRed);
+    int brightenedGreen = round(targetGreen);
+    int brightenedBlue = round(targetBlue);
+    int brightenedWarm = round(targetWarm);
+    int brightenedCold = round(targetCold);
 
     if (brightenedRed == currentRed && brightenedGreen == currentGreen && brightenedBlue == currentBlue && brightenedWarm == currentWarm && brightenedCold == currentCold){
-        if (printerConfig.debuging){
-            Serial.println(F("LEDS Trying to change to the same color."));
-        };
         return; // already at that color
     }
     float stepTime = (float)duration / 255.0;
@@ -69,16 +65,7 @@ void tweenToColor(int targetRed, int targetGreen, int targetBlue, int targetWarm
 void updateleds(){
     Serial.println(F("Updating leds"));
 
-    Serial.println(printerVariables.stage);
-    Serial.println(printerVariables.gcodeState);
-    Serial.println(printerVariables.ledstate);
-    Serial.println(printerVariables.hmsstate);
-    Serial.println(printerVariables.parsedHMS);
     //OFF
-
-    if (printerConfig.turbo == true){
-        return;
-    }
 
     if (printerVariables.online == false){ //printer offline
         tweenToColor(0,0,0,0,0,500); //OFF
@@ -146,12 +133,6 @@ void updateleds(){
 
     if ((millis() - printerVariables.finishstartms) <= 300000 && printerVariables.gcodeState == "FINISH"){
         tweenToColor(0,255,0,0,0,500); //ON
-        if (printerConfig.debuging){
-            Serial.println(F("Finished print, Turning Leds green"));
-            Serial.println(F("Leds should stay on for: "));
-            Serial.print((millis() - printerVariables.finishstartms));
-            Serial.print(F(" MS"));
-        };
         return;
     }
 
@@ -186,7 +167,6 @@ void setupLeds() {
 }
 
 void ledsloop(){
-    RGBCycle();
     if((millis() - printerVariables.finishstartms) >= 300000 && printerVariables.gcodeState == "FINISH"){
         printerVariables.gcodeState == "IDLE";
         updateleds();

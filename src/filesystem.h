@@ -3,6 +3,7 @@
 
 const char *configPath = "/blledconfig.json";
 
+#include "ArduinoJson.h"
 #include <Arduino.h>
 #include <LittleFS.h>
 #include "types.h"

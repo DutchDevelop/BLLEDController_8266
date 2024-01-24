@@ -1,5 +1,9 @@
 #include <Arduino.h>
+#include "leds.h"
 #include "filesystem.h"
+#include "serialmanager.h"
+#include "wifi-manager.h"
+#include "mqttmanager.h"
 
 void setup(){
     Serial.begin(115200);
@@ -20,11 +24,16 @@ void setup(){
         tweenToColor(255,0,255,0,0,500); 
         return;
     };
-
-    
-
+    delay(2000);
+    tweenToColor(0,0,255,0,0,500); 
+    setupMqtt();
+    tweenToColor(0,0,0,0,0,500); 
 }
 
 void loop(){
-    serialLoop();
+    serialLoop();   
+    if (WiFi.status() == WL_CONNECTED){
+        mqttloop();
+        ledsloop();
+    }
 }
