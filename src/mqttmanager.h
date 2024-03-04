@@ -6,6 +6,7 @@
 #include <PubSubClient.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h> 
+#include "AutoGrowBufferStream.h"
 
 #include "types.h"
 #include "leds.h"
@@ -16,6 +17,8 @@ static int mqttdocument = 8192;
 
 WiFiClientSecure wifiSecureClient;
 PubSubClient mqttClient(wifiSecureClient);
+
+AutoGrowBufferStream stream;
 
 String device_topic;
 String report_topic;
@@ -84,51 +87,78 @@ void connectMqtt(){
     }
 }
 
-void ParseCallback(JsonDocument &messageobject){
-    bool Changed = false;
-    if (messageobject["print"].containsKey("stg_cur")){
-        printerVariables.stage = messageobject["print"]["stg_cur"];
-        Changed = true;
-    }
+void ParseCallback(char *topic, byte *payload, unsigned int length){
+    DynamicJsonDocument messageobject(mqttdocument);
 
-    if (messageobject["print"].containsKey("gcode_state")){
-        printerVariables.gcodeState = messageobject["print"]["gcode_state"].as<String>();
-        if (printerVariables.gcodeState == "FINISH"){
-            if (printerVariables.finished == false){
-                printerVariables.finished = true;
-                printerVariables.finishstartms = millis();
+    DynamicJsonDocument filter(128);
+    filter["print"]["*"] =  true;
+    filter["camera"]["*"] =  true;
+    
+    auto deserializeError = deserializeJson(messageobject, payload, length, DeserializationOption::Filter(filter));
+    if (!deserializeError){
+        Serial.println(F("Mqtt message received,"));
+        Serial.println(F("FreeHeap: "));
+        Serial.print(ESP.getFreeHeap());
+        Serial.println();
+
+        Serial.println(F("Mqtt payload:"));
+        Serial.println();
+        serializeJson(messageobject, Serial);
+        Serial.println();
+
+        bool Changed = false;
+        if (messageobject["print"].containsKey("stg_cur")){
+            printerVariables.stage = messageobject["print"]["stg_cur"];
+            Changed = true;
+        }else{
+            Serial.println(F("stg_cur not in message"));
+        }
+
+        if (messageobject["print"].containsKey("gcode_state")){
+            printerVariables.gcodeState = messageobject["print"]["gcode_state"].as<String>();
+            if (printerVariables.gcodeState == "FINISH"){
+                if (printerVariables.finished == false){
+                    printerVariables.finished = true;
+                    printerVariables.finishstartms = millis();
+                }
+            }else{
+                printerVariables.finished = false;
+            }
+            Changed = true;
+        }
+
+        if (messageobject["print"].containsKey("lights_report")) {
+            JsonArray lightsReport = messageobject["print"]["lights_report"];
+
+            for (JsonObject light : lightsReport) {
+                if (light["node"] == "chamber_light") {
+                    printerVariables.ledstate = light["mode"] == "on";
+                    Changed = true;
+                }
             }
         }else{
-            printerVariables.finished = false;
+            Serial.println(F("lights_report not in message"));
         }
-        Changed = true;
-    }
 
-    if (messageobject["print"].containsKey("lights_report")) {
-        JsonArray lightsReport = messageobject["print"]["lights_report"];
-
-        for (JsonObject light : lightsReport) {
-            if (light["node"] == "chamber_light") {
-                printerVariables.ledstate = light["mode"] == "on";
-                Changed = true;
+        if (messageobject["print"].containsKey("hms")){
+            printerVariables.hmsstate = false;
+            printerVariables.parsedHMS = "";
+            for (const auto& hms : messageobject["print"]["hms"].as<JsonArray>()) {
+                if (ParseHMSSeverity(hms["code"]) != ""){
+                    printerVariables.hmsstate = true;
+                    printerVariables.parsedHMS = ParseHMSSeverity(hms["code"]);
+                }
             }
+            Changed = true;
         }
-    }else
 
-    if (messageobject["print"].containsKey("hms")){
-        printerVariables.hmsstate = false;
-        printerVariables.parsedHMS = "";
-        for (const auto& hms : messageobject["print"]["hms"].as<JsonArray>()) {
-            if (ParseHMSSeverity(hms["code"]) != ""){
-                printerVariables.hmsstate = true;
-                printerVariables.parsedHMS = ParseHMSSeverity(hms["code"]);
-            }
+        if (Changed == true){
+            Serial.println(F("Updating from mqtt"));
+            updateleds();
         }
-        Changed = true;
-    }
-
-    if (Changed == true){
-        updateleds();
+    }else{
+        Serial.println(F("Deserialize error while parsing mqtt"));
+        return;
     }
 }
 
@@ -144,14 +174,8 @@ StaticJsonDocument<64> getMqttPayloadFilter()
 }
 
 void mqttCallback(char *topic, byte *payload, unsigned int length){
-    DynamicJsonDocument messageobject(mqttdocument);
-    
-    auto deserializeError = deserializeJson(messageobject, payload, length, DeserializationOption::Filter(getMqttPayloadFilter()));
-    if (!deserializeError){
-        ParseCallback(messageobject);
-    }else{
-        Serial.println(F("Deserialize error while parsing mqtt"));
-    }
+    ParseCallback(topic, (byte *)stream.get_buffer(), stream.current_length());
+    stream.flush();
 }
 
 void setupMqtt(){
@@ -161,6 +185,7 @@ void setupMqtt(){
     wifiSecureClient.setInsecure();
     mqttClient.setBufferSize(mqttbuffer); //4096
     mqttClient.setServer(globalVariables.printerIP, 8883);
+    mqttClient.setStream(stream);
     mqttClient.setCallback(mqttCallback);
     Serial.println(F("Finished setting up MQTT, Attempting to connect"));
     connectMqtt();
